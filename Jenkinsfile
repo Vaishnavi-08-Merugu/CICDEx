@@ -26,15 +26,27 @@ pipeline {
         }
       }
     }
+    stage('Build with Maven') {
+  steps {
+    script {
+      if (isUnix()) {
+        sh 'mvn -B clean package -DskipTests'
+      } else {
+        bat 'mvn -B clean package -DskipTests'
+      }
+    }
+  }
+}
+
 
     stage('Build Docker image') {
       steps {
         script {
           if (isUnix()) {
-            sh "docker build -t ${FULL_TAG} ."
+            sh "docker build -f docker/Dockerfile -t ${FULL_TAG} docker"
             sh "docker tag ${FULL_TAG} ${LATEST_TAG}"
           } else {
-            bat "docker build -t ${FULL_TAG} ."
+            bat "docker build -f docker/Dockerfile -t ${FULL_TAG} docker"
             bat "docker tag ${FULL_TAG} ${LATEST_TAG}"
           }
         }
