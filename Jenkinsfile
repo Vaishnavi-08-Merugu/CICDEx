@@ -1,5 +1,5 @@
 pipeline {
-  agent { label 'linux' }  // change to a node that has docker and mvn on PATH
+  agent { label 'win' }  // change to a node that has docker and mvn on PATH
   environment {
     APP_NAME = "myapp"                            // change to your app name
     DOCKERHUB_REPO = "your-dockerhub-username/${APP_NAME}" // change username
