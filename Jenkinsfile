@@ -1,98 +1,88 @@
 pipeline {
-  agent { label 'win-or-linux' } // use a label that matches your agents; or 'any'
+  agent any
+
   environment {
-    APP_NAME = "myapp"                                // change
-    DOCKERHUB_REPO = "your-dockerhub-username/${APP_NAME}"
-    DOCKER_IMAGE = "${DOCKERHUB_REPO}:${env.BUILD_NUMBER}"
-    MAVEN_OPTS = "-Dmaven.repo.local=${env.WORKSPACE}\\.m2"
+    DOCKER_REGISTRY = "docker.io"
+    DOCKER_REPO     = "vaishnavi873/flask-app"   // change if needed
+    IMAGE_TAG       = "${env.BUILD_NUMBER}"
+    FULL_TAG        = "${DOCKER_REPO}:${IMAGE_TAG}"
+    LATEST_TAG      = "${DOCKER_REPO}:latest"
   }
-  options { timestamps(); buildDiscarder(logRotator(numToKeepStr: '10')) }
+
+  options {
+    buildDiscarder(logRotator(numToKeepStr: '20'))
+    timestamps()
+  }
+
   stages {
     stage('Checkout') {
       steps { checkout scm }
     }
 
-    stage('Maven build') {
+    stage('List workspace') {
       steps {
         script {
-          if (isUnix()) {
-            sh 'mvn -B -V clean package'
-          } else {
-            // Windows: use cmd/batch
-            bat 'mvn -B -V clean package'
-          }
-        }
-      }
-      post {
-        always {
-          junit '**/target/surefire-reports/*.xml'
+          if (isUnix()) { sh 'ls -la' } else { bat 'dir' }
         }
       }
     }
 
-    stage('Build Docker image (if docker present)') {
+    stage('Build Docker image') {
       steps {
         script {
-          def dockerAvailable = false
           if (isUnix()) {
-            dockerAvailable = sh(script: 'which docker >/dev/null 2>&1 && echo OK || true', returnStdout: true).trim() == 'OK'
+            sh "docker build -t ${FULL_TAG} ."
+            sh "docker tag ${FULL_TAG} ${LATEST_TAG}"
           } else {
-            // On Windows check docker.exe existence in PATH
-            def out = bat(script: 'where docker || echo NOTFOUND', returnStdout: true).trim()
-            dockerAvailable = !out.contains('NOTFOUND') && out.size() > 0
+            bat "docker build -t ${FULL_TAG} ."
+            bat "docker tag ${FULL_TAG} ${LATEST_TAG}"
           }
+        }
+      }
+    }
 
-          if (!dockerAvailable) {
-            echo "Docker CLI not found on agent — skipping Docker build/push."
-          } else {
+    stage('Login & Push to Docker Hub') {
+      steps {
+        withCredentials([usernamePassword(credentialsId: 'dockerhub-creds', usernameVariable: 'DOCKERHUB_USER', passwordVariable: 'DOCKERHUB_PASS')]) {
+          script {
             if (isUnix()) {
-              sh "docker build -t ${DOCKER_IMAGE} ."
+              sh 'echo "$DOCKERHUB_PASS" | docker login -u "$DOCKERHUB_USER" --password-stdin'
+              sh "docker push ${FULL_TAG}"
+              sh "docker push ${LATEST_TAG}"
+              sh 'docker logout'
             } else {
-              bat "docker build -t ${DOCKER_IMAGE} ."
+              bat 'echo %DOCKERHUB_PASS% | docker login -u %DOCKERHUB_USER% --password-stdin'
+              bat "docker push ${FULL_TAG}"
+              bat "docker push ${LATEST_TAG}"
+              bat 'docker logout'
             }
           }
         }
       }
     }
 
-    stage('Push to Docker Hub (if built)') {
-      when {
-        expression {
-          // only push if docker image was built AND docker available
-          return fileExists('Dockerfile') // keep simple; we already checked docker availability in prior stage
-        }
-      }
+    stage('Cleanup local images') {
       steps {
         script {
-          // Check docker present again
-          def hasDocker = isUnix() ? (sh(script: 'which docker >/dev/null 2>&1 && echo OK || true', returnStdout: true).trim() == 'OK') : (bat(script: 'where docker || echo NOTFOUND', returnStdout: true).trim().contains('docker'))
-          if (!hasDocker) {
-            echo "Docker not available on this agent; skipping push."
+          if (isUnix()) {
+            sh "docker rmi ${FULL_TAG} || true"
+            sh "docker rmi ${LATEST_TAG} || true"
           } else {
-            withCredentials([usernamePassword(credentialsId: 'dockerhub-creds', usernameVariable: 'DOCKERHUB_USER', passwordVariable: 'DOCKERHUB_PASS')]) {
-              if (isUnix()) {
-                sh 'echo "$DOCKERHUB_PASS" | docker login -u "$DOCKERHUB_USER" --password-stdin'
-                sh "docker push ${DOCKER_IMAGE}"
-                sh 'docker logout'
-              } else {
-                bat 'echo %DOCKERHUB_PASS% | docker login -u %DOCKERHUB_USER% --password-stdin'
-                bat "docker push ${DOCKER_IMAGE}"
-                bat 'docker logout'
-              }
-            }
+            bat "docker rmi ${FULL_TAG} || exit /b 0"
+            bat "docker rmi ${LATEST_TAG} || exit /b 0"
           }
         }
       }
     }
+  }
 
-    stage('Archive artifact') {
-      steps {
-        archiveArtifacts artifacts: 'target/*.jar', fingerprint: true, allowEmptyArchive: true
+  post {
+    success { echo "✅ Docker pushed: ${FULL_TAG} and ${LATEST_TAG}" }
+    failure { echo "❌ Pipeline failed — check console log" }
+    always {
+      script {
+        if (isUnix()) { sh "docker images | head -n 50 || true" } else { bat "docker images | more" }
       }
     }
-  } // stages
-  post {
-    success { echo "Pipeline succeeded" }
-    failure { echo "Build failed — check console output" }
   }
 }
