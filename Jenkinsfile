@@ -43,10 +43,10 @@ pipeline {
       steps {
         script {
           if (isUnix()) {
-            sh "docker build -f docker/Dockerfile -t ${FULL_TAG} docker"
+            sh "docker build -t ${FULL_TAG} ."
             sh "docker tag ${FULL_TAG} ${LATEST_TAG}"
           } else {
-            bat "docker build -f docker/Dockerfile -t ${FULL_TAG} docker"
+            bat "docker build -t ${FULL_TAG} ."
             bat "docker tag ${FULL_TAG} ${LATEST_TAG}"
           }
         }
